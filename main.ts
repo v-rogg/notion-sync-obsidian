@@ -1,85 +1,69 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import {
+	App,
+	Editor,
+	FuzzySuggestModal,
+	moment,
+	Notice,
+	Plugin,
+} from 'obsidian';
+import {LinearSyncSettingTab} from './lib/settings';
+import {Issue, LinearClient} from '@linear/sdk';
+import {getMyIssues} from './lib/linear';
 
-// Remember to rename these classes and interfaces!
 
-interface MyPluginSettings {
-	mySetting: string;
+interface LinearSyncSettings {
+	apiKey: string | null;
 }
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
+const DEFAULT_SETTINGS: LinearSyncSettings = {
+	apiKey: null
 }
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+export default class LinearSyncPlugin extends Plugin {
+	settings: LinearSyncSettings;
+	linearClient: LinearClient;
+	syncedIssues: Issue[] = [];
 
 	async onload() {
 		await this.loadSettings();
 
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
+		if (typeof this.settings.apiKey === "string") {
+			this.linearClient = new LinearClient({apiKey: this.settings.apiKey})
+		} else {
+			new Notice(`No API key loaded`);
+		}
 
 		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
+		const statusBar = this.addStatusBarItem();
+		statusBar.setText(`Linear ×`);
+		statusBar.onClickEvent(async () => {
+			this.syncedIssues = await sync(this.app, this.linearClient, statusBar)
+		})
 
 		// This adds a simple command that can be triggered anywhere
 		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
+			id: 'add-linear-issue',
+			name: 'Add Linear Issue',
+			editorCallback: (editor) => {
+				new AddIssueLinkModal(this.app, this.syncedIssues, editor).open();
 			}
 		});
 
 		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
-		});
+		this.addSettingTab(new LinearSyncSettingTab(this.app, this));
 
 		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
+		this.registerInterval(window.setInterval(async () => {
+			this.syncedIssues = await sync(this.app, this.linearClient, statusBar)
+		}, 60 * 1000));
+
+		this.syncedIssues = await sync(this.app, this.linearClient, statusBar);
 	}
 
 	onunload() {
-
+		this.registerEvent(this.app.vault.on('create', () => {
+			console.log('a new file has entered the arena')
+		}));
 	}
 
 	async loadSettings() {
@@ -91,44 +75,112 @@ export default class MyPlugin extends Plugin {
 	}
 }
 
-class SampleModal extends Modal {
-	constructor(app: App) {
+async function sync(app: App, linearClient: LinearClient, statusBar: HTMLElement) {
+	const {vault, workspace} = app;
+
+	statusBar.setText(`Linear ↺ (${this.syncedIssues.length} | ${moment().format('HH:mm:ss')})`);
+
+	const lastOpenFilesPaths = workspace.getLastOpenFiles();
+	for (const paths of lastOpenFilesPaths) {
+		const file = vault.getFileByPath(paths)
+		if (file) {
+			const content = await vault.cachedRead(file);
+			const lines = content.split('\n')
+			const updatedLines: any = []
+			for (let line of lines) {
+				const idMatch = line.match('https:\\/\\/linear\\.app\\/[a-zA-Z0-9-_]+\\/issue\\/([a-zA-Z0-9-_]+)\\/')
+				if (idMatch) {
+					const issueId = idMatch[1];
+					// TODO: Cache queries
+					const issue = await linearClient.issue(issueId);
+
+					if (moment(file.stat.mtime).isBefore(moment(issue.updatedAt))) {
+						if (issue.completedAt !== undefined) {
+							line = line.replace('- [ ] ', '- [x] ')
+						} else {
+							line = line.replace('- [x] ', '- [ ] ')
+						}
+					} else {
+						const checkboxMatch = line.match('- \\[(.)\\] ')
+						if (checkboxMatch) {
+							if (checkboxMatch[1] === "x" && issue.completedAt === undefined) {
+								// TODO: Add 'in progress' states
+								console.log(issue.identifier, "update to done")
+								const workflowStates = await linearClient.workflowStates()
+								await linearClient.updateIssue(issue.identifier, {stateId: workflowStates.nodes.find((a) => {return a.type === "completed"})?.id});
+							} else if (checkboxMatch[1] === " " && issue.completedAt !== undefined) {
+								// await linearClient.updateIssue(issue.identifier, {stateId: "Todo"});
+								console.log(issue. identifier, "update to undone")
+								const workflowStates = await linearClient.workflowStates()
+								await linearClient.updateIssue(issue.identifier, {stateId: workflowStates.nodes.find((a) => {return a.type === "unstarted"})?.id});
+							}
+						}
+					}
+				}
+				updatedLines.push(line);
+			}
+
+			await vault.process(file, () => {
+				// TODO: dont use cached read for processing
+				return updatedLines.join('\n')
+			})
+		}
+	}
+
+	statusBar.setText(`Linear ✓ (${this.syncedIssues.length} | ${moment().format('HH:mm:ss')})`);
+
+	return await getMyIssues(linearClient)
+}
+
+
+interface MappedIssue {
+	id: string
+	title: string
+	url: string
+	completed: boolean
+}
+
+class AddIssueLinkModal extends FuzzySuggestModal<MappedIssue> {
+	issues: MappedIssue[];
+	editor: Editor;
+
+	constructor(app: App, issues: Issue[], editor: Editor) {
 		super(app);
+		this.editor = editor;
+		this.issues = issues.map(issue => {
+			return {
+				id: issue.identifier,
+				title: issue.title,
+				url: issue.url,
+				completed: issue.completedAt !== undefined
+			}
+		})
 	}
 
-	onOpen() {
-		const {contentEl} = this;
-		contentEl.setText('Woah!');
+	getItems(): MappedIssue[] {
+		return this.issues;
 	}
 
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
-}
-
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
-
-	constructor(app: App, plugin: MyPlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
+	getItemText(issue: MappedIssue): string {
+		return `${issue.title} (${issue.id})`;
 	}
 
-	display(): void {
-		const {containerEl} = this;
+	onChooseItem(issue: MappedIssue, evt: MouseEvent | KeyboardEvent) {
+		new Notice(`Selected ${issue.title} (${issue.id})`);
 
-		containerEl.empty();
+		const currentLine = this.editor.getLine(this.editor.getCursor().line)
 
-		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
-				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
-					await this.plugin.saveSettings();
-				}));
+		console.log(currentLine)
+		console.log(currentLine.match('- \\[.\\] '))
+
+		if (currentLine.match('- \\[.\\] ') && issue.completed) {
+			console.log("mark done")
+			this.editor.replaceRange(`- [x] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
+		}
+
+		this.editor.replaceRange(`[${issue.title} (*${issue.id}*)](${issue.url}) `, this.editor.getCursor())
+		this.editor.setCursor({line: this.editor.getCursor().line, ch: parseInt(this.editor.getLine(this.editor.getCursor().line)) + 1})
 	}
 }
+
+
