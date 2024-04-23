@@ -87,7 +87,6 @@ async function sync(app: App, linearClient: LinearClient, statusBar: HTMLElement
 		if (file) {
 			const content = await vault.cachedRead(file);
 			const lines = content.split('\n')
-			const updatedLines: any = []
 			for (let line of lines) {
 				const idMatch = line.match('https:\\/\\/linear\\.app\\/[a-zA-Z0-9-_]+\\/issue\\/([a-zA-Z0-9-_]+)\\/')
 				if (idMatch) {
@@ -101,34 +100,43 @@ async function sync(app: App, linearClient: LinearClient, statusBar: HTMLElement
 						queriedIssues[issueId] = issue;
 					}
 
-					if (moment(file.stat.mtime).isBefore(moment(issue.updatedAt))) {
-						if (issue.completedAt !== undefined) {
-							line = line.replace('- [ ] ', '- [x] ')
-						} else {
-							line = line.replace('- [x] ', '- [ ] ')
-						}
-					} else {
+					if (moment(file.stat.mtime).isAfter(moment(issue.updatedAt))) {
 						const checkboxMatch = line.match('- \\[(.)\\] ')
 						if (checkboxMatch) {
 							if (checkboxMatch[1] === "x" && issue.completedAt === undefined) {
 								// TODO: Add 'in progress' states
-								console.log(issue.identifier, "update to done")
 								const workflowStates = await linearClient.workflowStates()
 								await linearClient.updateIssue(issue.identifier, {stateId: workflowStates.nodes.find((a) => {return a.type === "completed"})?.id});
 							} else if (checkboxMatch[1] === " " && issue.completedAt !== undefined) {
-								// await linearClient.updateIssue(issue.identifier, {stateId: "Todo"});
-								console.log(issue. identifier, "update to undone")
 								const workflowStates = await linearClient.workflowStates()
 								await linearClient.updateIssue(issue.identifier, {stateId: workflowStates.nodes.find((a) => {return a.type === "unstarted"})?.id});
 							}
 						}
 					}
 				}
-				updatedLines.push(line);
 			}
 
-			await vault.process(file, () => {
-				// TODO: dont use cached read for processing
+			await vault.process(file, (data) => {
+				const lines = data.split('\n')
+				const updatedLines: any = []
+				for (let line of lines) {
+					const idMatch = line.match('https:\\/\\/linear\\.app\\/[a-zA-Z0-9-_]+\\/issue\\/([a-zA-Z0-9-_]+)\\/')
+					if (idMatch) {
+						const issueId = idMatch[1];
+
+						let issue = queriedIssues[issueId];
+
+						if (moment(file.stat.mtime).isBefore(moment(issue.updatedAt))) {
+							if (issue.completedAt !== undefined) {
+								line = line.replace('- [ ] ', '- [x] ')
+							} else {
+								line = line.replace('- [x] ', '- [ ] ')
+							}
+						}
+					}
+					updatedLines.push(line);
+				}
+
 				return updatedLines.join('\n')
 			})
 		}
