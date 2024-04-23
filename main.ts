@@ -78,7 +78,7 @@ export default class LinearSyncPlugin extends Plugin {
 async function sync(app: App, linearClient: LinearClient, statusBar: HTMLElement) {
 	const {vault, workspace} = app;
 
-	statusBar.setText(`Linear ↺ (${this.syncedIssues.length} | ${moment().format('HH:mm:ss')})`);
+	statusBar.setText(`Linear ↺ (${moment().format('HH:mm:ss')})`);
 
 	const lastOpenFilesPaths = workspace.getLastOpenFiles();
 	for (const paths of lastOpenFilesPaths) {
@@ -127,9 +127,11 @@ async function sync(app: App, linearClient: LinearClient, statusBar: HTMLElement
 		}
 	}
 
-	statusBar.setText(`Linear ✓ (${this.syncedIssues.length} | ${moment().format('HH:mm:ss')})`);
+	const issues = await getMyIssues(linearClient)
 
-	return await getMyIssues(linearClient)
+	statusBar.setText(`Linear ✓ (${issues.length} | ${moment().format('HH:mm:ss')})`);
+
+	return issues
 }
 
 
@@ -166,7 +168,7 @@ class AddIssueLinkModal extends FuzzySuggestModal<MappedIssue> {
 	}
 
 	onChooseItem(issue: MappedIssue, evt: MouseEvent | KeyboardEvent) {
-		new Notice(`Selected ${issue.title} (${issue.id})`);
+		new Notice(`Linked ${issue.title} (${issue.id})`);
 
 		const currentLine = this.editor.getLine(this.editor.getCursor().line)
 
