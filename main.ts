@@ -1,13 +1,13 @@
 import {
 	App,
 	Editor,
-	FuzzySuggestModal,
+	FuzzySuggestModal, Modal,
 	moment,
 	Notice,
-	Plugin,
+	Plugin, Setting,
 } from 'obsidian';
 import {LinearSyncSettingTab} from './lib/settings';
-import {Issue, LinearClient} from '@linear/sdk';
+import {Issue, LinearClient, Team } from '@linear/sdk';
 import {getMyIssues} from './lib/linear';
 
 
@@ -22,6 +22,7 @@ const DEFAULT_SETTINGS: LinearSyncSettings = {
 export default class LinearSyncPlugin extends Plugin {
 	settings: LinearSyncSettings;
 	linearClient: LinearClient;
+	linearTeams: Team[];
 	syncedIssues: Issue[] = [];
 
 	async onload() {
@@ -37,7 +38,9 @@ export default class LinearSyncPlugin extends Plugin {
 		const statusBar = this.addStatusBarItem();
 		statusBar.setText(`Linear ×`);
 		statusBar.onClickEvent(async () => {
-			this.syncedIssues = await sync(this.app, this.linearClient, statusBar)
+			const s = await sync(this.app, this.linearClient, statusBar)
+			this.syncedIssues = s.issues;
+			this.linearTeams = s.teams;
 		})
 
 		// This adds a simple command that can be triggered anywhere
@@ -49,15 +52,27 @@ export default class LinearSyncPlugin extends Plugin {
 			}
 		});
 
+		this.addCommand({
+			id: 'create-linear-issue',
+			name: 'Create Linear Issue',
+			editorCallback: (editor) => {
+				new CreateIssueModal(this.app, this.linearClient, this.linearTeams, editor).open();
+			}
+		})
+
 		// This adds a settings tab so the user can configure various aspects of the plugin
 		this.addSettingTab(new LinearSyncSettingTab(this.app, this));
 
 		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
 		this.registerInterval(window.setInterval(async () => {
-			this.syncedIssues = await sync(this.app, this.linearClient, statusBar)
+			const s = await sync(this.app, this.linearClient, statusBar)
+			this.syncedIssues = s.issues;
+			this.linearTeams = s.teams;
 		}, 60 * 1000));
 
-		this.syncedIssues = await sync(this.app, this.linearClient, statusBar);
+		const s = await sync(this.app, this.linearClient, statusBar)
+		this.syncedIssues = s.issues;
+		this.linearTeams = s.teams;
 	}
 
 	onunload() {
@@ -143,10 +158,11 @@ async function sync(app: App, linearClient: LinearClient, statusBar: HTMLElement
 	}
 
 	const issues = await getMyIssues(linearClient)
+	const teams = await linearClient.teams()
 
 	statusBar.setText(`Linear ✓ (${issues.length} | ${moment().format('HH:mm:ss')})`);
 
-	return issues
+	return {issues: issues, teams: teams.nodes}
 }
 
 
@@ -187,9 +203,6 @@ class AddIssueLinkModal extends FuzzySuggestModal<MappedIssue> {
 
 		const currentLine = this.editor.getLine(this.editor.getCursor().line)
 
-		console.log(currentLine)
-		console.log(currentLine.match('- \\[.\\] '))
-
 		if (currentLine.match('- \\[.\\] ') && issue.completed) {
 			console.log("mark done")
 			this.editor.replaceRange(`- [x] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
@@ -200,4 +213,84 @@ class AddIssueLinkModal extends FuzzySuggestModal<MappedIssue> {
 	}
 }
 
+class CreateIssueModal extends Modal {
+	result: {
+		title: string | undefined
+		team: string | undefined
+	};
+	linearClient: LinearClient;
+	linearTeams: Team[];
+	editor: Editor;
 
+	constructor(app: App, linearClient: LinearClient, linearTeams: Team[], editor: Editor) {
+		super(app);
+		this.linearClient = linearClient;
+		this.linearTeams = linearTeams;
+		this.result = {
+			title: undefined,
+			team: linearTeams[0].id
+		}
+		this.editor = editor
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.createEl("h1", {text: "Create Linear Issue"})
+
+		new Setting(contentEl)
+			.setName("Issue Title")
+			.addText((text) =>
+				text.onChange((value) => {
+					this.result.title = value
+				}));
+
+		new Setting(contentEl)
+			.setName("Team")
+			.addDropdown(drop => {
+				for (let team of this.linearTeams) {
+					drop.addOption(team.id, team.name)
+				}
+				drop.onChange(async (value) =>	{
+					this.result.team = value
+				});
+			})
+
+		new Setting(contentEl)
+			.addButton((btn) =>
+				btn
+					.setButtonText("Create")
+					.setCta()
+					.onClick(() => {
+						this.close();
+						this.submit();
+					}));
+	}
+
+	onClose() {
+		let { contentEl } = this;
+		contentEl.empty();
+	}
+
+	async submit() {
+		console.log(this.result)
+		if (this.result.title !== undefined && this.result.team !== undefined) {
+			const request = await this.linearClient.createIssue({
+				title: this.result.title,
+				teamId: this.result.team
+			})
+			const issue = await request.issue
+
+			if (issue) {
+				const currentLine = this.editor.getLine(this.editor.getCursor().line)
+
+				if (currentLine.match('- \\[.\\] ') && issue.completedAt !== undefined) {
+					console.log("mark done")
+					this.editor.replaceRange(`- [x] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
+				}
+
+				this.editor.replaceRange(`[${issue.title} (*${issue.identifier}*)](${issue.url}) `, this.editor.getCursor())
+				this.editor.setCursor({line: this.editor.getCursor().line, ch: parseInt(this.editor.getLine(this.editor.getCursor().line)) + 1})
+			}
+		}
+	}
+}
