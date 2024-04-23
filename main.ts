@@ -77,6 +77,7 @@ export default class LinearSyncPlugin extends Plugin {
 
 async function sync(app: App, linearClient: LinearClient, statusBar: HTMLElement) {
 	const {vault, workspace} = app;
+	const queriedIssues: any = {};
 
 	statusBar.setText(`Linear ↺ (${moment().format('HH:mm:ss')})`);
 
@@ -91,8 +92,14 @@ async function sync(app: App, linearClient: LinearClient, statusBar: HTMLElement
 				const idMatch = line.match('https:\\/\\/linear\\.app\\/[a-zA-Z0-9-_]+\\/issue\\/([a-zA-Z0-9-_]+)\\/')
 				if (idMatch) {
 					const issueId = idMatch[1];
-					// TODO: Cache queries
-					const issue = await linearClient.issue(issueId);
+
+					let issue;
+					if (issueId in queriedIssues) {
+						issue = queriedIssues[issueId];
+					} else {
+						issue = await linearClient.issue(issueId);
+						queriedIssues[issueId] = issue;
+					}
 
 					if (moment(file.stat.mtime).isBefore(moment(issue.updatedAt))) {
 						if (issue.completedAt !== undefined) {
