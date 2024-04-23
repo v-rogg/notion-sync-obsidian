@@ -6,18 +6,10 @@ import {
 	Notice,
 	Plugin, Setting,
 } from 'obsidian';
-import {LinearSyncSettingTab} from './lib/settings';
-import {Issue, LinearClient, Team } from '@linear/sdk';
+import {DEFAULT_SETTINGS, LinearSyncSettings, LinearSyncSettingTab} from './lib/settings';
+import {Issue, LinearClient, Team, WorkflowState} from '@linear/sdk';
 import {getMyIssues} from './lib/linear';
 
-
-interface LinearSyncSettings {
-	apiKey: string | null;
-}
-
-const DEFAULT_SETTINGS: LinearSyncSettings = {
-	apiKey: null
-}
 
 export default class LinearSyncPlugin extends Plugin {
 	settings: LinearSyncSettings;
@@ -38,7 +30,7 @@ export default class LinearSyncPlugin extends Plugin {
 		const statusBar = this.addStatusBarItem();
 		statusBar.setText(`Linear ×`);
 		statusBar.onClickEvent(async () => {
-			const s = await sync(this.app, this.linearClient, statusBar)
+			const s = await sync(this.app, this.settings, this.linearClient, statusBar)
 			this.syncedIssues = s.issues;
 			this.linearTeams = s.teams;
 		})
@@ -47,7 +39,7 @@ export default class LinearSyncPlugin extends Plugin {
 		this.addCommand({
 			id: 'add-linear-issue',
 			name: 'Add Linear Issue',
-			editorCallback: (editor) => {
+			editorCallback: async (editor) => {
 				new AddIssueLinkModal(this.app, this.syncedIssues, editor).open();
 			}
 		});
@@ -55,8 +47,11 @@ export default class LinearSyncPlugin extends Plugin {
 		this.addCommand({
 			id: 'create-linear-issue',
 			name: 'Create Linear Issue',
-			editorCallback: (editor) => {
+			editorCallback: async (editor) => {
 				new CreateIssueModal(this.app, this.linearClient, this.linearTeams, editor).open();
+				const s = await sync(this.app, this.settings, this.linearClient, statusBar)
+				this.syncedIssues = s.issues;
+				this.linearTeams = s.teams;
 			}
 		})
 
@@ -65,12 +60,12 @@ export default class LinearSyncPlugin extends Plugin {
 
 		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
 		this.registerInterval(window.setInterval(async () => {
-			const s = await sync(this.app, this.linearClient, statusBar)
+			const s = await sync(this.app, this.settings, this.linearClient, statusBar)
 			this.syncedIssues = s.issues;
 			this.linearTeams = s.teams;
 		}, 60 * 1000));
 
-		const s = await sync(this.app, this.linearClient, statusBar)
+		const s = await sync(this.app, this.settings, this.linearClient, statusBar)
 		this.syncedIssues = s.issues;
 		this.linearTeams = s.teams;
 	}
@@ -90,7 +85,7 @@ export default class LinearSyncPlugin extends Plugin {
 	}
 }
 
-async function sync(app: App, linearClient: LinearClient, statusBar: HTMLElement) {
+async function sync(app: App, settings: LinearSyncSettings, linearClient: LinearClient, statusBar: HTMLElement) {
 	const {vault, workspace} = app;
 	const queriedIssues: any = {};
 
@@ -119,12 +114,11 @@ async function sync(app: App, linearClient: LinearClient, statusBar: HTMLElement
 						const checkboxMatch = line.match('- \\[(.)\\] ')
 						if (checkboxMatch) {
 							if (checkboxMatch[1] === "x" && issue.completedAt === undefined) {
-								// TODO: Add 'in progress' states
-								const workflowStates = await linearClient.workflowStates()
-								await linearClient.updateIssue(issue.identifier, {stateId: workflowStates.nodes.find((a) => {return a.type === "completed"})?.id});
+								await linearClient.updateIssue(issue.identifier, {stateId: settings.doneWorkflowState});
+							} else if (checkboxMatch[1] === "/" && issue.completedAt !== undefined) {
+								await linearClient.updateIssue(issue.identifier, {stateId: settings.inProgressWorkflowState});
 							} else if (checkboxMatch[1] === " " && issue.completedAt !== undefined) {
-								const workflowStates = await linearClient.workflowStates()
-								await linearClient.updateIssue(issue.identifier, {stateId: workflowStates.nodes.find((a) => {return a.type === "unstarted"})?.id});
+								await linearClient.updateIssue(issue.identifier, {stateId: settings.todoWorkflowState});
 							}
 						}
 					}
@@ -142,9 +136,11 @@ async function sync(app: App, linearClient: LinearClient, statusBar: HTMLElement
 						let issue = queriedIssues[issueId];
 
 						if (moment(file.stat.mtime).isBefore(moment(issue.updatedAt))) {
-							if (issue.completedAt !== undefined) {
+							if (issue.stateId === settings.todoWorkflowState) {
 								line = line.replace('- [ ] ', '- [x] ')
-							} else {
+							} else if (issue.stateId === settings.inProgressWorkflowState) {
+								line = line.replace('- [/] ', '- [ ] ')
+							} else if (issue.stateId === settings.doneWorkflowState) {
 								line = line.replace('- [x] ', '- [ ] ')
 							}
 						}
@@ -170,7 +166,7 @@ interface MappedIssue {
 	id: string
 	title: string
 	url: string
-	completed: boolean
+	state: WorkflowState
 }
 
 class AddIssueLinkModal extends FuzzySuggestModal<MappedIssue> {
@@ -185,7 +181,7 @@ class AddIssueLinkModal extends FuzzySuggestModal<MappedIssue> {
 				id: issue.identifier,
 				title: issue.title,
 				url: issue.url,
-				completed: issue.completedAt !== undefined
+				state: issue.state
 			}
 		})
 	}
@@ -281,13 +277,6 @@ class CreateIssueModal extends Modal {
 			const issue = await request.issue
 
 			if (issue) {
-				const currentLine = this.editor.getLine(this.editor.getCursor().line)
-
-				if (currentLine.match('- \\[.\\] ') && issue.completedAt !== undefined) {
-					console.log("mark done")
-					this.editor.replaceRange(`- [x] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
-				}
-
 				this.editor.replaceRange(`[${issue.title} (*${issue.identifier}*)](${issue.url}) `, this.editor.getCursor())
 				this.editor.setCursor({line: this.editor.getCursor().line, ch: parseInt(this.editor.getLine(this.editor.getCursor().line)) + 1})
 			}
