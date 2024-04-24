@@ -115,7 +115,7 @@ export default class LinearSyncPlugin extends Plugin {
 async function sync(app: App, settings: LinearSyncSettings, linearClient: LinearClient, statusBar: HTMLElement) {
 	const {vault, workspace} = app;
 
-	statusBar.setText(`Linear ↺ (${moment().format('HH:mm:ss')})`);
+	statusBar.setText(`Linear ↺ (${moment().format('HH:mm:ss')})`)
 
 	const enrichedIssues: EnrichedLinearIssue[] = []
 	const issues = await getMyIssues(linearClient)
@@ -152,17 +152,17 @@ async function sync(app: App, settings: LinearSyncSettings, linearClient: Linear
 							const checkboxMatch = line.match('- \\[(.)\\] ')
 							if (checkboxMatch) {
 								if (checkboxMatch[1] === "x" && issue.state.type !== "completed") {
-									console.log(`Mark issue ${issue.identifier} as completed`, settings.doneWorkflowState)
 									await linearClient.updateIssue(issue.id, {stateId: settings.doneWorkflowState});
+									new Notice(`Marked issue ${issue.identifier} as completed`)
 								} else if (checkboxMatch[1] === "/" && issue.state.type !== "started") {
-									console.log(`Mark issue ${issue.identifier} as started`, settings.inProgressWorkflowState)
 									await linearClient.updateIssue(issue.id, {stateId: settings.inProgressWorkflowState});
+									new Notice(`Marked issue ${issue.identifier} as started`)
 								} else if (checkboxMatch[1] === " " && issue.state.type !== "unstarted" && issue.state.type === "backlog") {
-									console.log(`Mark issue ${issue.identifier} as todo`, settings.todoWorkflowState)
 									await linearClient.updateIssue(issue.id, {stateId: settings.todoWorkflowState});
+									new Notice(`Marked issue ${issue.identifier} as todo`)
 								} else if (checkboxMatch[1] === "-" && issue.state.type !== "canceled") {
-									console.log(`Mark issue ${issue.identifier} as cancelled`, settings.cancelledWorkflowState)
 									await linearClient.updateIssue(issue.id, {stateId: settings.cancelledWorkflowState});
+									new Notice(`Marked issue ${issue.identifier} as cancelled`)
 								}
 							}
 						}
