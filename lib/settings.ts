@@ -8,7 +8,7 @@ export interface LinearSyncSettings {
 	todoWorkflowState: string;
 	inProgressWorkflowState: string;
 	doneWorkflowState: string;
-	canceledWorkflowState: string;
+	cancelledWorkflowState: string;
 }
 
 export const DEFAULT_SETTINGS: Partial<LinearSyncSettings> = {
@@ -98,11 +98,11 @@ export class LinearSyncSettingTab extends PluginSettingTab {
 			.setName("'Canceled' workflow state")
 			.addDropdown(drop => {
 				for (let workflow of this.plugin.settings.workflowStates) {
-					drop.setValue(this.plugin.settings.canceledWorkflowState)
+					drop.setValue(this.plugin.settings.cancelledWorkflowState)
 					drop.addOption(workflow.id, workflow.name)
 				}
 				drop.onChange(async (value) => {
-					this.plugin.settings.canceledWorkflowState = value
+					this.plugin.settings.cancelledWorkflowState = value
 					console.log(value)
 					await this.plugin.saveSettings();
 				});

@@ -7,7 +7,7 @@ import {
 	Plugin, Setting,
 } from 'obsidian';
 import {DEFAULT_SETTINGS, LinearSyncSettings, LinearSyncSettingTab} from './lib/settings';
-import {LinearClient, Team, WorkflowState} from '@linear/sdk';
+import {LinearClient, Project, Team, WorkflowState} from '@linear/sdk';
 import {getMyIssues} from './lib/linear';
 
 interface LinearSync {
@@ -18,10 +18,12 @@ interface LinearSync {
 
 interface EnrichedLinearIssue {
 	id: string,
+	identifier: string,
 	title: string,
 	url: string,
 	updatedAt: Date,
 	state: WorkflowState | undefined;
+	project: Project | undefined
 }
 
 export default class LinearSyncPlugin extends Plugin {
@@ -115,20 +117,22 @@ async function sync(app: App, settings: LinearSyncSettings, linearClient: Linear
 
 	statusBar.setText(`Linear ↺ (${moment().format('HH:mm:ss')})`);
 
-	const issues = await getMyIssues(linearClient)
 	const enrichedIssues: EnrichedLinearIssue[] = []
+	const issues = await getMyIssues(linearClient)
 	for (const issue of issues) {
 		enrichedIssues.push({
-			id: issue.identifier,
+			id: issue.id,
+			identifier: issue.identifier,
 			title: issue.title,
 			url: issue.url,
 			updatedAt: issue.updatedAt,
-			state: await issue.state || undefined
+			state: await issue.state || undefined,
+			project: await issue.project || undefined
 		});
 	}
 	const enrichedIssuesMap: any = {}
 	for (const issue of enrichedIssues) {
-		enrichedIssuesMap[issue.id] = issue
+		enrichedIssuesMap[issue.identifier] = issue
 	}
 
 	const lastOpenFilesPaths = workspace.getLastOpenFiles();
@@ -141,7 +145,6 @@ async function sync(app: App, settings: LinearSyncSettings, linearClient: Linear
 				const idMatch = line.match('https:\\/\\/linear\\.app\\/[a-zA-Z0-9-_]+\\/issue\\/([a-zA-Z0-9-_]+)\\/')
 				if (idMatch) {
 					const issueId = idMatch[1];
-
 					const issue = enrichedIssuesMap[issueId]
 
 					if (issue) {
@@ -149,13 +152,17 @@ async function sync(app: App, settings: LinearSyncSettings, linearClient: Linear
 							const checkboxMatch = line.match('- \\[(.)\\] ')
 							if (checkboxMatch) {
 								if (checkboxMatch[1] === "x" && issue.state.type !== "completed") {
-									await linearClient.updateIssue(issue.identifier, {stateId: settings.doneWorkflowState});
+									console.log(`Mark issue ${issue.identifier} as completed`, settings.doneWorkflowState)
+									await linearClient.updateIssue(issue.id, {stateId: settings.doneWorkflowState});
 								} else if (checkboxMatch[1] === "/" && issue.state.type !== "started") {
-									await linearClient.updateIssue(issue.identifier, {stateId: settings.inProgressWorkflowState});
+									console.log(`Mark issue ${issue.identifier} as started`, settings.inProgressWorkflowState)
+									await linearClient.updateIssue(issue.id, {stateId: settings.inProgressWorkflowState});
 								} else if (checkboxMatch[1] === " " && issue.state.type !== "unstarted" && issue.state.type === "backlog") {
-									await linearClient.updateIssue(issue.identifier, {stateId: settings.todoWorkflowState});
+									console.log(`Mark issue ${issue.identifier} as todo`, settings.todoWorkflowState)
+									await linearClient.updateIssue(issue.id, {stateId: settings.todoWorkflowState});
 								} else if (checkboxMatch[1] === "-" && issue.state.type !== "canceled") {
-									await linearClient.updateIssue(issue.identifier, {stateId: settings.canceledWorkflowState});
+									console.log(`Mark issue ${issue.identifier} as cancelled`, settings.cancelledWorkflowState)
+									await linearClient.updateIssue(issue.id, {stateId: settings.cancelledWorkflowState});
 								}
 							}
 						}
@@ -218,11 +225,12 @@ class AddIssueLinkModal extends FuzzySuggestModal<EnrichedLinearIssue> {
 	}
 
 	getItemText(issue: EnrichedLinearIssue): string {
-		return `${issue.title} (${issue.id}) - ${issue.state?.name}`;
+		return `${issue.title} (${issue.identifier})
+${issue.project?.name} | ${issue.state?.name}`;
 	}
 
 	onChooseItem(issue: EnrichedLinearIssue, evt: MouseEvent | KeyboardEvent) {
-		new Notice(`Linked ${issue.title} (${issue.id})`);
+		new Notice(`Linked ${issue.title} (${issue.identifier})`);
 
 		const currentLine = this.editor.getLine(this.editor.getCursor().line)
 
@@ -238,7 +246,7 @@ class AddIssueLinkModal extends FuzzySuggestModal<EnrichedLinearIssue> {
 			}
 		}
 
-		this.editor.replaceRange(`[${issue.title} (*${issue.id}*)](${issue.url}) `, this.editor.getCursor())
+		this.editor.replaceRange(`[${issue.title} (*${issue.identifier}*)](${issue.url}) `, this.editor.getCursor())
 		this.editor.setCursor({line: this.editor.getCursor().line, ch: parseInt(this.editor.getLine(this.editor.getCursor().line)) + 1})
 	}
 }
@@ -252,22 +260,42 @@ class AddUndoneIssueLinkModal extends FuzzySuggestModal<EnrichedLinearIssue> {
 		super(app);
 		this.editor = editor;
 		this.settings = settings;
+
+		if (linearSync === undefined) {
+			new Notice("Not yet synced");
+		}
+
 		this.issues = linearSync.issues
 	}
 
 	getItems(): EnrichedLinearIssue[] {
 		return this.issues.filter((issue: EnrichedLinearIssue) => {
-			console.log(issue.state?.type)
 			return issue.state?.type === "started" || issue.state?.type === "unstarted" || issue.state?.type === "backlog"
+		}).sort((a, b) => {
+			// @ts-ignore
+			if (a.state.position < b.state.position) return 1;
+			// @ts-ignore
+			if (a.state.position > b.state.position) return -1;
+
+			// @ts-ignore
+			if (a.project.name < b.project.name) return -1;
+			// @ts-ignore
+			if (a.project.name > b.project.name) return 1;
+
+			if (a.title < b.title) return -1;
+			if (a.title > b.title) return 1;
+
+			return 0;
 		});
 	}
 
 	getItemText(issue: EnrichedLinearIssue): string {
-		return `${issue.title} (${issue.id}) - ${issue.state?.name}`;
+		return `${issue.title} (${issue.identifier})
+${issue.project?.name} | ${issue.state?.name}`;
 	}
 
 	onChooseItem(issue: EnrichedLinearIssue, evt: MouseEvent | KeyboardEvent) {
-		new Notice(`Linked ${issue.title} (${issue.id})`);
+		new Notice(`Linked ${issue.title} (${issue.identifier})`);
 
 		const currentLine = this.editor.getLine(this.editor.getCursor().line)
 
@@ -283,7 +311,7 @@ class AddUndoneIssueLinkModal extends FuzzySuggestModal<EnrichedLinearIssue> {
 			}
 		}
 
-		this.editor.replaceRange(`[${issue.title} (*${issue.id}*)](${issue.url}) `, this.editor.getCursor())
+		this.editor.replaceRange(`[${issue.title} (*${issue.identifier}*)](${issue.url}) `, this.editor.getCursor())
 		this.editor.setCursor({line: this.editor.getCursor().line, ch: parseInt(this.editor.getLine(this.editor.getCursor().line)) + 1})
 	}
 }
