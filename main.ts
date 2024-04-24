@@ -7,15 +7,27 @@ import {
 	Plugin, Setting,
 } from 'obsidian';
 import {DEFAULT_SETTINGS, LinearSyncSettings, LinearSyncSettingTab} from './lib/settings';
-import {Issue, LinearClient, Team, WorkflowState} from '@linear/sdk';
+import {LinearClient, Team, WorkflowState} from '@linear/sdk';
 import {getMyIssues} from './lib/linear';
 
+interface LinearSync {
+	teams: Team[],
+	states: WorkflowState[],
+	issues: EnrichedLinearIssue[]
+}
+
+interface EnrichedLinearIssue {
+	id: string,
+	title: string,
+	url: string,
+	updatedAt: Date,
+	state: WorkflowState | undefined;
+}
 
 export default class LinearSyncPlugin extends Plugin {
 	settings: LinearSyncSettings;
 	linearClient: LinearClient;
-	linearTeams: Team[];
-	syncedIssues: Issue[] = [];
+	linearSync: LinearSync
 
 	async onload() {
 		await this.loadSettings();
@@ -26,21 +38,30 @@ export default class LinearSyncPlugin extends Plugin {
 			new Notice(`No API key loaded`);
 		}
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
 		const statusBar = this.addStatusBarItem();
 		statusBar.setText(`Linear ×`);
 		statusBar.onClickEvent(async () => {
 			const s = await sync(this.app, this.settings, this.linearClient, statusBar)
-			this.syncedIssues = s.issues;
-			this.linearTeams = s.teams;
+			this.linearSync = {
+				teams: s.teams,
+				states: s.states,
+				issues: s.issues
+			};
 		})
 
-		// This adds a simple command that can be triggered anywhere
 		this.addCommand({
 			id: 'add-linear-issue',
 			name: 'Add Linear Issue',
 			editorCallback: async (editor) => {
-				new AddIssueLinkModal(this.app, this.syncedIssues, editor).open();
+				new AddIssueLinkModal(this.app, this.settings, this.linearSync, editor).open();
+			}
+		});
+
+		this.addCommand({
+			id: 'add-undone-linear-issue',
+			name: 'Add undone Linear Issue',
+			editorCallback: async (editor) => {
+				new AddUndoneIssueLinkModal(this.app, this.settings, this.linearSync, editor).open();
 			}
 		});
 
@@ -48,32 +69,36 @@ export default class LinearSyncPlugin extends Plugin {
 			id: 'create-linear-issue',
 			name: 'Create Linear Issue',
 			editorCallback: async (editor) => {
-				new CreateIssueModal(this.app, this.linearClient, this.linearTeams, editor).open();
+				new CreateIssueModal(this.app, this.linearClient, this.linearSync, editor).open();
 				const s = await sync(this.app, this.settings, this.linearClient, statusBar)
-				this.syncedIssues = s.issues;
-				this.linearTeams = s.teams;
+				this.linearSync = {
+					teams: s.teams,
+					states: s.states,
+					issues: s.issues
+				};
 			}
 		})
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
 		this.addSettingTab(new LinearSyncSettingTab(this.app, this));
 
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
 		this.registerInterval(window.setInterval(async () => {
 			const s = await sync(this.app, this.settings, this.linearClient, statusBar)
-			this.syncedIssues = s.issues;
-			this.linearTeams = s.teams;
+			this.linearSync = {
+				teams: s.teams,
+				states: s.states,
+				issues: s.issues
+			};
 		}, 60 * 1000));
 
 		const s = await sync(this.app, this.settings, this.linearClient, statusBar)
-		this.syncedIssues = s.issues;
-		this.linearTeams = s.teams;
+		this.linearSync = {
+			teams: s.teams,
+			states: s.states,
+			issues: s.issues
+		};
 	}
 
 	onunload() {
-		this.registerEvent(this.app.vault.on('create', () => {
-			console.log('a new file has entered the arena')
-		}));
 	}
 
 	async loadSettings() {
@@ -87,9 +112,24 @@ export default class LinearSyncPlugin extends Plugin {
 
 async function sync(app: App, settings: LinearSyncSettings, linearClient: LinearClient, statusBar: HTMLElement) {
 	const {vault, workspace} = app;
-	const queriedIssues: any = {};
 
 	statusBar.setText(`Linear ↺ (${moment().format('HH:mm:ss')})`);
+
+	const issues = await getMyIssues(linearClient)
+	const enrichedIssues: EnrichedLinearIssue[] = []
+	for (const issue of issues) {
+		enrichedIssues.push({
+			id: issue.identifier,
+			title: issue.title,
+			url: issue.url,
+			updatedAt: issue.updatedAt,
+			state: await issue.state || undefined
+		});
+	}
+	const enrichedIssuesMap: any = {}
+	for (const issue of enrichedIssues) {
+		enrichedIssuesMap[issue.id] = issue
+	}
 
 	const lastOpenFilesPaths = workspace.getLastOpenFiles();
 	for (const paths of lastOpenFilesPaths) {
@@ -102,23 +142,21 @@ async function sync(app: App, settings: LinearSyncSettings, linearClient: Linear
 				if (idMatch) {
 					const issueId = idMatch[1];
 
-					let issue;
-					if (issueId in queriedIssues) {
-						issue = queriedIssues[issueId];
-					} else {
-						issue = await linearClient.issue(issueId);
-						queriedIssues[issueId] = issue;
-					}
+					const issue = enrichedIssuesMap[issueId]
 
-					if (moment(file.stat.mtime).isAfter(moment(issue.updatedAt))) {
-						const checkboxMatch = line.match('- \\[(.)\\] ')
-						if (checkboxMatch) {
-							if (checkboxMatch[1] === "x" && issue.completedAt === undefined) {
-								await linearClient.updateIssue(issue.identifier, {stateId: settings.doneWorkflowState});
-							} else if (checkboxMatch[1] === "/" && issue.completedAt !== undefined) {
-								await linearClient.updateIssue(issue.identifier, {stateId: settings.inProgressWorkflowState});
-							} else if (checkboxMatch[1] === " " && issue.completedAt !== undefined) {
-								await linearClient.updateIssue(issue.identifier, {stateId: settings.todoWorkflowState});
+					if (issue) {
+						if (moment(file.stat.mtime).isAfter(moment(issue.updatedAt))) {
+							const checkboxMatch = line.match('- \\[(.)\\] ')
+							if (checkboxMatch) {
+								if (checkboxMatch[1] === "x" && issue.state.type !== "completed") {
+									await linearClient.updateIssue(issue.identifier, {stateId: settings.doneWorkflowState});
+								} else if (checkboxMatch[1] === "/" && issue.state.type !== "started") {
+									await linearClient.updateIssue(issue.identifier, {stateId: settings.inProgressWorkflowState});
+								} else if (checkboxMatch[1] === " " && issue.state.type !== "unstarted" && issue.state.type === "backlog") {
+									await linearClient.updateIssue(issue.identifier, {stateId: settings.todoWorkflowState});
+								} else if (checkboxMatch[1] === "-" && issue.state.type !== "canceled") {
+									await linearClient.updateIssue(issue.identifier, {stateId: settings.canceledWorkflowState});
+								}
 							}
 						}
 					}
@@ -133,15 +171,17 @@ async function sync(app: App, settings: LinearSyncSettings, linearClient: Linear
 					if (idMatch) {
 						const issueId = idMatch[1];
 
-						let issue = queriedIssues[issueId];
+						const issue = enrichedIssuesMap[issueId];
 
 						if (moment(file.stat.mtime).isBefore(moment(issue.updatedAt))) {
-							if (issue.stateId === settings.todoWorkflowState) {
-								line = line.replace('- [ ] ', '- [x] ')
-							} else if (issue.stateId === settings.inProgressWorkflowState) {
-								line = line.replace('- [/] ', '- [ ] ')
-							} else if (issue.stateId === settings.doneWorkflowState) {
-								line = line.replace('- [x] ', '- [ ] ')
+							if (issue.state?.type === "completed") {
+								this.editor.replaceRange(`- [x] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
+							} else if (issue.state?.type === "started") {
+								this.editor.replaceRange(`- [/] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
+							} else if (issue.state?.type === "unstarted" || issue.state?.type === "backlog") {
+								this.editor.replaceRange(`- [ ] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
+							} else if (issue.state?.type === "canceled") {
+								this.editor.replaceRange(`- [-] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
 							}
 						}
 					}
@@ -153,55 +193,94 @@ async function sync(app: App, settings: LinearSyncSettings, linearClient: Linear
 		}
 	}
 
-	const issues = await getMyIssues(linearClient)
-	const teams = await linearClient.teams()
+	const teams = (await linearClient.teams()).nodes
+	const states = <WorkflowState[]>(await linearClient.workflowStates()).nodes
 
 	statusBar.setText(`Linear ✓ (${issues.length} | ${moment().format('HH:mm:ss')})`);
 
-	return {issues: issues, teams: teams.nodes}
+	return {issues: enrichedIssues, teams: teams, states}
 }
 
-
-interface MappedIssue {
-	id: string
-	title: string
-	url: string
-	state: WorkflowState
-}
-
-class AddIssueLinkModal extends FuzzySuggestModal<MappedIssue> {
-	issues: MappedIssue[];
+class AddIssueLinkModal extends FuzzySuggestModal<EnrichedLinearIssue> {
+	issues: EnrichedLinearIssue[];
 	editor: Editor;
+	settings: LinearSyncSettings;
 
-	constructor(app: App, issues: Issue[], editor: Editor) {
+	constructor(app: App, settings: LinearSyncSettings, linearSync: LinearSync, editor: Editor) {
 		super(app);
 		this.editor = editor;
-		this.issues = issues.map(issue => {
-			return {
-				id: issue.identifier,
-				title: issue.title,
-				url: issue.url,
-				state: issue.state
-			}
-		})
+		this.settings = settings;
+		this.issues = linearSync.issues
 	}
 
-	getItems(): MappedIssue[] {
+	getItems(): EnrichedLinearIssue[] {
 		return this.issues;
 	}
 
-	getItemText(issue: MappedIssue): string {
-		return `${issue.title} (${issue.id})`;
+	getItemText(issue: EnrichedLinearIssue): string {
+		return `${issue.title} (${issue.id}) - ${issue.state?.name}`;
 	}
 
-	onChooseItem(issue: MappedIssue, evt: MouseEvent | KeyboardEvent) {
+	onChooseItem(issue: EnrichedLinearIssue, evt: MouseEvent | KeyboardEvent) {
 		new Notice(`Linked ${issue.title} (${issue.id})`);
 
 		const currentLine = this.editor.getLine(this.editor.getCursor().line)
 
-		if (currentLine.match('- \\[.\\] ') && issue.completed) {
-			console.log("mark done")
-			this.editor.replaceRange(`- [x] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
+		if (currentLine.match('- \\[.\\] ')) {
+			if (issue.state?.type === "completed") {
+				this.editor.replaceRange(`- [x] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
+			} else if (issue.state?.type === "started") {
+				this.editor.replaceRange(`- [/] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
+			} else if (issue.state?.type === "unstarted" || issue.state?.type === "backlog") {
+				this.editor.replaceRange(`- [ ] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
+			} else if (issue.state?.type === "canceled") {
+				this.editor.replaceRange(`- [-] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
+			}
+		}
+
+		this.editor.replaceRange(`[${issue.title} (*${issue.id}*)](${issue.url}) `, this.editor.getCursor())
+		this.editor.setCursor({line: this.editor.getCursor().line, ch: parseInt(this.editor.getLine(this.editor.getCursor().line)) + 1})
+	}
+}
+
+class AddUndoneIssueLinkModal extends FuzzySuggestModal<EnrichedLinearIssue> {
+	issues: EnrichedLinearIssue[];
+	editor: Editor;
+	settings: LinearSyncSettings;
+
+	constructor(app: App, settings: LinearSyncSettings, linearSync: LinearSync, editor: Editor) {
+		super(app);
+		this.editor = editor;
+		this.settings = settings;
+		this.issues = linearSync.issues
+	}
+
+	getItems(): EnrichedLinearIssue[] {
+		return this.issues.filter((issue: EnrichedLinearIssue) => {
+			console.log(issue.state?.type)
+			return issue.state?.type === "started" || issue.state?.type === "unstarted" || issue.state?.type === "backlog"
+		});
+	}
+
+	getItemText(issue: EnrichedLinearIssue): string {
+		return `${issue.title} (${issue.id}) - ${issue.state?.name}`;
+	}
+
+	onChooseItem(issue: EnrichedLinearIssue, evt: MouseEvent | KeyboardEvent) {
+		new Notice(`Linked ${issue.title} (${issue.id})`);
+
+		const currentLine = this.editor.getLine(this.editor.getCursor().line)
+
+		if (currentLine.match('- \\[.\\] ')) {
+			if (issue.state?.type === "completed") {
+				this.editor.replaceRange(`- [x] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
+			} else if (issue.state?.type === "started") {
+				this.editor.replaceRange(`- [/] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
+			} else if (issue.state?.type === "unstarted" || issue.state?.type === "backlog") {
+				this.editor.replaceRange(`- [ ] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
+			} else if (issue.state?.type === "canceled") {
+				this.editor.replaceRange(`- [-] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
+			}
 		}
 
 		this.editor.replaceRange(`[${issue.title} (*${issue.id}*)](${issue.url}) `, this.editor.getCursor())
@@ -218,13 +297,13 @@ class CreateIssueModal extends Modal {
 	linearTeams: Team[];
 	editor: Editor;
 
-	constructor(app: App, linearClient: LinearClient, linearTeams: Team[], editor: Editor) {
+	constructor(app: App, linearClient: LinearClient, linearSync: LinearSync, editor: Editor) {
 		super(app);
 		this.linearClient = linearClient;
-		this.linearTeams = linearTeams;
+		this.linearTeams = linearSync.teams;
 		this.result = {
 			title: undefined,
-			team: linearTeams[0].id
+			team: linearSync.teams[0].id
 		}
 		this.editor = editor
 	}
@@ -268,7 +347,6 @@ class CreateIssueModal extends Modal {
 	}
 
 	async submit() {
-		console.log(this.result)
 		if (this.result.title !== undefined && this.result.team !== undefined) {
 			const request = await this.linearClient.createIssue({
 				title: this.result.title,
