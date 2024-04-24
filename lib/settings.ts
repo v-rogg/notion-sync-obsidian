@@ -53,12 +53,12 @@ export class LinearSyncSettingTab extends PluginSettingTab {
 			.setName("Linear Workspace settings")
 
 		new Setting(containerEl)
-			.setName("'Todo' workflow state")
+			.setName("'Todo' workflow state ( - [ ] )")
 			.addDropdown(drop => {
 				for (let workflow of this.plugin.settings.workflowStates) {
-					drop.setValue(this.plugin.settings.todoWorkflowState)
 					drop.addOption(workflow.id, workflow.name)
 				}
+				drop.setValue(this.plugin.settings.todoWorkflowState)
 				drop.onChange(async (value) => {
 					this.plugin.settings.todoWorkflowState = value
 					await this.plugin.saveSettings();
@@ -67,12 +67,12 @@ export class LinearSyncSettingTab extends PluginSettingTab {
 			.setDisabled(this.plugin.settings.workflowStates === undefined)
 
 		new Setting(containerEl)
-			.setName("'In Progress' workflow state")
+			.setName("'In Progress' workflow state ( - [/] )")
 			.addDropdown(drop => {
 				for (let workflow of this.plugin.settings.workflowStates) {
-					drop.setValue(this.plugin.settings.inProgressWorkflowState)
 					drop.addOption(workflow.id, workflow.name)
 				}
+				drop.setValue(this.plugin.settings.inProgressWorkflowState)
 				drop.onChange(async (value) => {
 					this.plugin.settings.inProgressWorkflowState = value
 					await this.plugin.saveSettings();
@@ -81,12 +81,12 @@ export class LinearSyncSettingTab extends PluginSettingTab {
 			.setDisabled(this.plugin.settings.workflowStates === undefined)
 
 		new Setting(containerEl)
-			.setName("'Done' workflow state")
+			.setName("'Done' workflow state ( - [x] )")
 			.addDropdown(drop => {
 				for (let workflow of this.plugin.settings.workflowStates) {
-					drop.setValue(this.plugin.settings.doneWorkflowState)
 					drop.addOption(workflow.id, workflow.name)
 				}
+				drop.setValue(this.	plugin.settings.doneWorkflowState)
 				drop.onChange(async (value) => {
 					this.plugin.settings.doneWorkflowState = value
 					await this.plugin.saveSettings();
@@ -95,12 +95,12 @@ export class LinearSyncSettingTab extends PluginSettingTab {
 			.setDisabled(this.plugin.settings.workflowStates === undefined)
 
 		new Setting(containerEl)
-			.setName("'Canceled' workflow state")
+			.setName("'Canceled' workflow state ( - [-] )")
 			.addDropdown(drop => {
 				for (let workflow of this.plugin.settings.workflowStates) {
-					drop.setValue(this.plugin.settings.cancelledWorkflowState)
 					drop.addOption(workflow.id, workflow.name)
 				}
+				drop.setValue(this.plugin.settings.cancelledWorkflowState)
 				drop.onChange(async (value) => {
 					this.plugin.settings.cancelledWorkflowState = value
 					console.log(value)
