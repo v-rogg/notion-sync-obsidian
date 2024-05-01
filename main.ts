@@ -81,16 +81,29 @@ export default class LinearSyncPlugin extends Plugin {
 			}
 		})
 
+		this.addCommand({
+			id: 'sync-linear',
+			name: 'Sync Linear',
+			callback: async () => {
+				const s = await sync(this.app, this.settings, this.linearClient, statusBar)
+				this.linearSync = {
+					teams: s.teams,
+					states: s.states,
+					issues: s.issues
+				};
+			}
+		})
+
 		this.addSettingTab(new LinearSyncSettingTab(this.app, this));
 
-		this.registerInterval(window.setInterval(async () => {
-			const s = await sync(this.app, this.settings, this.linearClient, statusBar)
-			this.linearSync = {
-				teams: s.teams,
-				states: s.states,
-				issues: s.issues
-			};
-		}, 60 * 1000));
+		// this.registerInterval(window.setInterval(async () => {
+		// 	const s = await sync(this.app, this.settings, this.linearClient, statusBar)
+		// 	this.linearSync = {
+		// 		teams: s.teams,
+		// 		states: s.states,
+		// 		issues: s.issues
+		// 	};
+		// }, 60 * 1000));
 
 		const s = await sync(this.app, this.settings, this.linearClient, statusBar)
 		this.linearSync = {
@@ -130,12 +143,20 @@ async function sync(app: App, settings: LinearSyncSettings, linearClient: Linear
 			project: await issue.project || undefined
 		});
 	}
+
+	console.log("Issues loaded")
+
 	const enrichedIssuesMap: any = {}
 	for (const issue of enrichedIssues) {
 		enrichedIssuesMap[issue.identifier] = issue
 	}
 
+	console.log("Issues mapped")
+
 	const lastOpenFilesPaths = workspace.getLastOpenFiles();
+
+	console.log(lastOpenFilesPaths)
+
 	for (const paths of lastOpenFilesPaths) {
 		const file = vault.getFileByPath(paths)
 		if (file) {
@@ -170,6 +191,8 @@ async function sync(app: App, settings: LinearSyncSettings, linearClient: Linear
 				}
 			}
 
+			console.log("Check all files")
+
 			await vault.process(file, (data) => {
 				const lines = data.split('\n')
 				const updatedLines: any = []
@@ -181,14 +204,19 @@ async function sync(app: App, settings: LinearSyncSettings, linearClient: Linear
 						const issue = enrichedIssuesMap[issueId];
 
 						if (moment(file.stat.mtime).isBefore(moment(issue.updatedAt))) {
+							console.log(line, issue.state?.type)
 							if (issue.state?.type === "completed") {
-								this.editor.replaceRange(`- [x] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
+								line = line.replace('- \\[.\\] ', '- [x] ')
+								// this.editor.replaceRange(`- [x] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
 							} else if (issue.state?.type === "started") {
-								this.editor.replaceRange(`- [/] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
+								line = line.replace('- \\[.\\] ', '- [/] ')
+								// this.editor.replaceRange(`- [/] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
 							} else if (issue.state?.type === "unstarted" || issue.state?.type === "backlog") {
-								this.editor.replaceRange(`- [ ] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
+								line = line.replace('- \\[.\\] ', '- [ ] ')
+								// this.editor.replaceRange(`- [ ] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
 							} else if (issue.state?.type === "canceled") {
-								this.editor.replaceRange(`- [-] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
+								line = line.replace('- \\[.\\] ', '- [-] ')
+								// this.editor.replaceRange(`- [-] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
 							}
 						}
 					}
@@ -197,12 +225,15 @@ async function sync(app: App, settings: LinearSyncSettings, linearClient: Linear
 
 				return updatedLines.join('\n')
 			})
+
+			console.log("Process all files")
 		}
 	}
 
 	const teams = (await linearClient.teams()).nodes
+	console.log("Teams loaded")
 	const states = <WorkflowState[]>(await linearClient.workflowStates()).nodes
-
+	console.log("States loaded")
 	statusBar.setText(`Linear ✓ (${issues.length} | ${moment().format('HH:mm:ss')})`);
 
 	return {issues: enrichedIssues, teams: teams, states}
