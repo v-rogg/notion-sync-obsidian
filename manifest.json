@@ -1,9 +1,9 @@
 {
-	"id": "linear-sync",
-	"name": "Linear Sync",
-	"version": "0.9.3",
+	"id": "notion-sync",
+	"name": "Notion Sync",
+	"version": "0.1.0",
 	"minAppVersion": "1.5.0",
-	"description": "Sync Linear Issues with Obsidian checklists",
+	"description": "Sync Notion To-Do's with Obsidian checklists",
 	"author": "Valentin Rogg",
 	"authorUrl": "https://valentinrogg.de",
 	"isDesktopOnly": false

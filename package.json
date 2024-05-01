@@ -1,7 +1,7 @@
 {
-	"name": "obsidian-sample-plugin",
-	"version": "0.9.3",
-	"description": "Sync Linear Issues with Obsidian To-Do's",
+	"name": "notion-obsidian-sync",
+	"version": "0.1.0",
+	"description": "Sync Notion To-Do's with Obsidian checklists",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
@@ -21,7 +21,5 @@
 		"tslib": "2.4.0",
 		"typescript": "4.7.4"
 	},
-	"dependencies": {
-		"@linear/sdk": "^20.0.0"
-	}
+	"dependencies": {}
 }
