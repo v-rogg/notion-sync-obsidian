@@ -41,6 +41,21 @@ export async function loadPage(pageId: string, apiToken: string) {
 	return res.json;
 }
 
+export async function updatePage(pageId: string, apiToken: string, content: {}) {
+	console.log("Update Page")
+	const res = await requestUrl({
+		method: "PATCH",
+		url: `https://api.notion.com/v1/pages/${pageId}/`,
+		headers: {
+			Authorization: `Bearer ${apiToken}`,
+			"Content-Type": "application/json",
+			"Notion-Version": "2022-06-28",
+		},
+		body: JSON.stringify(content),
+	});
+	return res.json;
+}
+
 export async function searchForDatabases(apiToken: string) {
 	console.log(apiToken)
 	const res = await requestUrl({

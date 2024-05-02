@@ -15,11 +15,12 @@ import {
 	NotionSyncSettingsTab,
 } from "./lib/settings";
 import {loadDatabaseContent, loadPage} from './lib/notion';
+import {sync} from './lib/functions';
 
 interface notionSync {}
 
 interface NotionTodo {
-	id: string;
+	identifier: string;
 	name: string;
 	status: string;
 	url: string;
@@ -53,7 +54,7 @@ export default class NotionSyncPlugin extends Plugin {
 				const projectCache = new Map();
 
 				for (let todo of search.results) {
-					const id = `${todo.properties["ID"].unique_id.prefix}-${todo.properties["ID"].unique_id.number}`;
+					const identifier = `${todo.properties["ID"].unique_id.prefix}-${todo.properties["ID"].unique_id.number}`;
 					const name =
 						todo.properties["Task name"].title[0].plain_text;
 					const status = todo.properties["Status"].status.name;
@@ -71,7 +72,7 @@ export default class NotionSyncPlugin extends Plugin {
 					}
 
 					todos.push({
-						id,
+						identifier,
 						name,
 						status,
 						url,
@@ -85,18 +86,13 @@ export default class NotionSyncPlugin extends Plugin {
 			},
 		});
 
-		// this.addCommand({
-		// 	id: 'sync-linear',
-		// 	name: 'Sync Linear',
-		// 	callback: async () => {
-		// 		const s = await sync(this.app, this.settings, this.linearClient, statusBar)
-		// 		this.notionSync = {
-		// 			teams: s.teams,
-		// 			states: s.states,
-		// 			issues: s.issues
-		// 		};
-		// 	}
-		// })
+		this.addCommand({
+			id: 'sync-notion',
+			name: 'Sync Notion',
+			callback: async () => {
+				const s = await sync(this.app, this.settings)
+			}
+		})
 
 		this.addSettingTab(new NotionSyncSettingsTab(this.app, this));
 
@@ -257,12 +253,12 @@ class AddTodoLinkModal extends FuzzySuggestModal<NotionTodo> {
 	}
 
 	getItemText(issue: NotionTodo): string {
-		return `${issue.name} (${issue.id})
+		return `${issue.name} (${issue.identifier})
 ${issue.project} | ${issue.status}`;
 	}
 
 	onChooseItem(todo: NotionTodo, evt: MouseEvent | KeyboardEvent) {
-		new Notice(`Linked ${todo.name} (${todo.id})`);
+		new Notice(`Linked ${todo.name} (${todo.identifier})`);
 
 		const currentLine = this.editor.getLine(this.editor.getCursor().line);
 
@@ -274,16 +270,16 @@ ${issue.project} | ${issue.status}`;
 					this.editor.getCursor(),
 				);
 			} else if (
-				todo.status === "In review" ||
+				todo.status === "In Review" ||
 				todo.status === "Paused" ||
-				todo.status === "In progress"
+				todo.status === "In Progress"
 			) {
 				this.editor.replaceRange(
 					`- [/] `,
 					{ line: this.editor.getCursor().line, ch: 0 },
 					this.editor.getCursor(),
 				);
-			} else if (todo.status === "Planned" || todo.status === "Backlog") {
+			} else if (todo.status === "Todo" || todo.status === "Backlog") {
 				this.editor.replaceRange(
 					`- [ ] `,
 					{ line: this.editor.getCursor().line, ch: 0 },
@@ -293,7 +289,7 @@ ${issue.project} | ${issue.status}`;
 		}
 
 		this.editor.replaceRange(
-			`[${todo.name} (*${todo.id}*)](${todo.url}) `,
+			`[${todo.name} (*${todo.identifier}*)](${todo.url}) `,
 			this.editor.getCursor(),
 		);
 		this.editor.setCursor({
