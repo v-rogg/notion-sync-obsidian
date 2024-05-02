@@ -1,6 +1,44 @@
 import { App, moment, Notice } from "obsidian";
 import { NotionSyncSettings } from "./settings";
-import { loadPage, updatePage } from "./notion";
+import {loadDatabaseContent, loadPage, updatePage} from './notion';
+import {NotionTodo} from './types';
+
+export async function loadTodos(settings: NotionSyncSettings) {
+	let notice;
+	if (!settings.apiToken || !settings.todoDatabaseId) {
+		new Notice("Not all settings are set");
+		return;
+	} else {
+		notice = new Notice("Loading Notion To-Do's");
+	}
+	const search = await loadDatabaseContent(settings.todoDatabaseId, settings.apiToken);
+
+	const todos: NotionTodo[] = [];
+	const projectCache = new Map();
+
+	for (let page of search.results) {
+		let todo = parseTodo(page)
+
+		try {
+			let project;
+			const projectRelationId = page.properties["Project"].relation[0].id;
+			if (!projectCache.has(projectRelationId)) {
+				project = await loadPage(projectRelationId, settings.apiToken);
+
+				projectCache.set(projectRelationId, project);
+			} else {
+				project = projectCache.get(projectRelationId);
+			}
+
+			todo.project = project.properties["Project name"].title[0].plain_text;
+		} catch (e) {}
+
+		todos.push(todo);
+	}
+	notice.hide();
+
+	return todos
+}
 
 export async function sync(app: App, settings: NotionSyncSettings) {
 	if (!settings.apiToken) {
@@ -75,12 +113,7 @@ export async function sync(app: App, settings: NotionSyncSettings) {
 					if (idMatch) {
 						const todoId = idMatch[1];
 						const page = pageCache.get(todoId);
-						const todo = {
-							identifier: `${page.properties["ID"].unique_id.prefix}-${page.properties["ID"].unique_id.number}`,
-							name: page.properties["Task name"].title[0].plain_text,
-							status: page.properties["Status"].status.name,
-							url: page.url,
-						};
+						const todo = parseTodo(page);
 
 						if (moment(file.stat.mtime).isBefore(moment(page.last_edited_time))) {
 							console.log("Update locally", todo.status)
@@ -102,5 +135,14 @@ export async function sync(app: App, settings: NotionSyncSettings) {
 				return newLines.join("\n");
 			});
 		}
+	}
+}
+
+function parseTodo(page: any): NotionTodo {
+	return {
+		identifier: `${page.properties["ID"].unique_id.prefix}-${page.properties["ID"].unique_id.number}`,
+		name: page.properties["Task name"].title[0].plain_text,
+		status: page.properties["Status"].status.name,
+		url: page.url,
 	}
 }
