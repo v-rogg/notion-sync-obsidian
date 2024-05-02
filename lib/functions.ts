@@ -40,7 +40,7 @@ export async function sync(app: App, settings: NotionSyncSettings) {
 										Status: { status: { name: "Done" } },
 									},
 								});
-								new Notice(`Marked To-Do ${todo.identifier} as Done`);
+								new Notice(`Synced To-Do ${todo.identifier} as Done`);
 							} else if (
 								checkboxMatch[1] === "/" &&
 								todo.status !== "In Review" &&
@@ -52,14 +52,14 @@ export async function sync(app: App, settings: NotionSyncSettings) {
 										Status: { status: { name: "In Progress" } },
 									},
 								});
-								new Notice(`Marked issue ${todo.identifier} as In Progress`);
+								new Notice(`Synced issue ${todo.identifier} as In Progress`);
 							} else if (checkboxMatch[1] === " " && todo.status !== "Todo" && todo.status !== "Backlog") {
 								await updatePage(todoId, settings.apiToken, {
 									properties: {
 										Status: { status: { name: "Todo" } },
 									},
 								});
-								new Notice(`Marked To-Do ${todo.identifier} as Todo`);
+								new Notice(`Synced To-Do ${todo.identifier} as Todo`);
 							}
 						}
 					}
@@ -86,10 +86,13 @@ export async function sync(app: App, settings: NotionSyncSettings) {
 							console.log("Update locally", todo.status)
 							if (todo.status === "Done" || todo.status === "Archived") {
 								line = line.replace(/- \[.\] /, "- [x] ");
+								new Notice(`Marked To-Do ${todo.identifier} as Done`);
 							} else if (todo.status === "In Review" || todo.status === "Paused" || todo.status === "In Progress") {
 								line = line.replace(/- \[.\] /, "- [/] ");
+								new Notice(`Marked To-Do ${todo.identifier} as In Progress`);
 							} else if (todo.status === "Todo" || todo.status === "Backlog") {
 								line = line.replace(/- \[.\] /, "- [ ] ");
+								new Notice(`Marked To-Do ${todo.identifier} as Todo`);
 							}
 						}
 					}
