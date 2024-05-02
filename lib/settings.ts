@@ -1,14 +1,16 @@
-import {App, Notice, PluginSettingTab, Setting} from 'obsidian';
-import NotionSyncPlugin from './../main';
+import { App, Notice, PluginSettingTab, Setting } from "obsidian";
+import NotionSyncPlugin from "./../main";
+import { searchForDatabases } from "./notion";
 
 export interface NotionSyncSettings {
-	apiKey: string | null;
+	apiToken: string | null;
 	todoDatabaseId: string | null;
+	databases: any[];
 }
 
 export const DEFAULT_SETTINGS: Partial<NotionSyncSettings> = {
-	apiKey: null
-}
+	apiToken: null,
+};
 
 export class NotionSyncSettingsTab extends PluginSettingTab {
 	plugin: NotionSyncPlugin;
@@ -21,11 +23,12 @@ export class NotionSyncSettingsTab extends PluginSettingTab {
 	display(): void {
 		const { containerEl } = this;
 
+		let databaseIdEl: Setting;
+		let databases: any = [];
+
 		containerEl.empty();
 
-		new Setting(containerEl)
-			.setHeading()
-			.setName("General API settings")
+		new Setting(containerEl).setHeading().setName("General API settings");
 
 		new Setting(containerEl)
 			.setName("API Token")
@@ -33,27 +36,70 @@ export class NotionSyncSettingsTab extends PluginSettingTab {
 			.addText((text) =>
 				text
 					.setPlaceholder("secret_xxxxxxxxxxxxxxxxxxxxxxxxxx")
-					.setValue(typeof this.plugin.settings.apiKey === 'string' ? this.plugin.settings.apiKey : "")
+					.setValue(
+						typeof this.plugin.settings.apiToken === "string"
+							? this.plugin.settings.apiToken
+							: "",
+					)
 					.onChange(async (value) => {
-						this.plugin.settings.apiKey = value;
-						await this.plugin.saveSettings();
+						this.plugin.settings.apiToken = value;
 						new Notice("API Token stored");
-					})
+						databases = (await searchForDatabases(value)).results;
+						this.plugin.settings.databases = databases;
+						if (databases.length > 0) {
+							databaseIdEl
+								.clear()
+								.setName("To-Do Database Page")
+								.addDropdown((drop) => {
+									for (let db of databases) {
+										drop.addOption(
+											db.id,
+											db.title[0].plain_text,
+										);
+									}
+
+									if (this.plugin.settings.todoDatabaseId) {
+										drop.setValue(
+											this.plugin.settings.todoDatabaseId,
+										);
+									} else {
+										this.plugin.settings.todoDatabaseId = databases[0].id;
+									}
+									drop.onChange(async (value) => {
+										this.plugin.settings.todoDatabaseId =
+											value;
+										await this.plugin.saveSettings();
+									});
+								});
+						} else {
+							databaseIdEl.setDisabled(true);
+						}
+						await this.plugin.saveSettings();
+					}),
 			);
 
-		new Setting(containerEl)
-			.setHeading()
-			.setName("ToDo settings")
+		new Setting(containerEl).setHeading().setName("To-Do settings");
 
-		new Setting(containerEl)
-			.setName("ToDo Database ID")
-			.addText((text) =>
-				text
-					.setValue(typeof this.plugin.settings.todoDatabaseId === 'string' ? this.plugin.settings.todoDatabaseId : "")
-					.onChange(async (value) => {
+		if (this.plugin.settings.databases.length <= 0) {
+			databaseIdEl = new Setting(containerEl)
+				.setName("To-Do Database Page")
+				.setDisabled(true);
+		} else if (this.plugin.settings.databases.length > 0) {
+			databaseIdEl = new Setting(containerEl)
+				.setName("To-Do Database Page")
+				.addDropdown((drop) => {
+					for (let db of this.plugin.settings.databases) {
+						drop.addOption(db.id, db.title[0].plain_text);
+					}
+
+					if (this.plugin.settings.todoDatabaseId) {
+						drop.setValue(this.plugin.settings.todoDatabaseId);
+					}
+					drop.onChange(async (value) => {
 						this.plugin.settings.todoDatabaseId = value;
 						await this.plugin.saveSettings();
-					})
-			);
+					});
+				});
+		}
 	}
 }

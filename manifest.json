@@ -1,7 +1,7 @@
 {
 	"id": "notion-sync",
 	"name": "Notion Sync",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"minAppVersion": "1.5.0",
 	"description": "Sync Notion To-Do's with Obsidian checklists",
 	"author": "Valentin Rogg",

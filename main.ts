@@ -1,92 +1,73 @@
 import {
 	App,
 	Editor,
-	FuzzySuggestModal, Modal,
+	FuzzySuggestModal,
+	Modal,
 	moment,
 	Notice,
-	Plugin, requestUrl, Setting,
-} from 'obsidian';
-import {DEFAULT_SETTINGS, NotionSyncSettings, NotionSyncSettingsTab} from './lib/settings';
+	Plugin,
+	requestUrl,
+	Setting,
+} from "obsidian";
+import {
+	DEFAULT_SETTINGS,
+	NotionSyncSettings,
+	NotionSyncSettingsTab,
+} from "./lib/settings";
+import {loadDatabaseContent, loadPage} from './lib/notion';
 
-interface notionSync {
-}
+interface notionSync {}
 
 interface NotionTodo {
-	id: string,
-	name: string,
-	status: string,
-	url: string,
-	project: string,
+	id: string;
+	name: string;
+	status: string;
+	url: string;
+	project: string;
 }
 
 export default class NotionSyncPlugin extends Plugin {
 	settings: NotionSyncSettings;
-	notionSync: notionSync
+	notionSync: notionSync;
 
 	async onload() {
 		await this.loadSettings();
 
 		this.addCommand({
-			id: 'add-undone-notion-to-do',
-			name: 'Add undone Notion To-Do',
+			id: "add-undone-notion-to-do",
+			name: "Add undone Notion To-Do",
 			editorCallback: async (editor) => {
-
 				let notice;
-				if (!this.settings.apiKey || !this.settings.todoDatabaseId) {
-					new Notice("Not all settings are set")
-					return
+				if (!this.settings.apiToken || !this.settings.todoDatabaseId) {
+					new Notice("Not all settings are set");
+					return;
 				} else {
-					notice = new Notice("Loading Notion To-Do's")
+					notice = new Notice("Loading Notion To-Do's");
 				}
+				const search = await loadDatabaseContent(
+					this.settings.todoDatabaseId,
+					this.settings.apiToken,
+				);
 
-				const search = await requestUrl({
-					method: 'POST',
-					url: `https://api.notion.com/v1/databases/${this.settings.todoDatabaseId}/query`,
-					headers: {
-						'Authorization': `Bearer ${this.settings.apiKey}`,
-						'Content-Type': 'application/json',
-						'Notion-Version': '2022-06-28'
-					},
-					body: JSON.stringify({
-						"filter": {
-							"or": [
-								{
-									"property": "Status",
-									"status": {
-										"does_not_equal": "Done"
-									}
-								}
-							]
-						},
-					})
-				}).json
-
-				const todos: NotionTodo[] = []
+				const todos: NotionTodo[] = [];
 				const projectCache = new Map();
 
 				for (let todo of search.results) {
-					const id = `${todo.properties["ID"].unique_id.prefix}-${todo.properties["ID"].unique_id.number}`
-					const name = todo.properties["Task name"].title[0].plain_text
-					const status = todo.properties["Status"].status.name
-					const url = todo.url
-					const projectRelationId = todo.properties["Project"].relation[0].id
+					const id = `${todo.properties["ID"].unique_id.prefix}-${todo.properties["ID"].unique_id.number}`;
+					const name =
+						todo.properties["Task name"].title[0].plain_text;
+					const status = todo.properties["Status"].status.name;
+					const url = todo.url;
+					const projectRelationId =
+						todo.properties["Project"].relation[0].id;
 
 					let project;
 					if (!projectCache.has(projectRelationId)) {
-						project = await requestUrl({
-							method: 'GET',
-							url: `https://api.notion.com/v1/pages/${projectRelationId}/`,
-							headers: {
-								'Authorization': `Bearer ${this.settings.apiKey}`,
-								'Content-Type': 'application/json',
-								'Notion-Version': '2022-06-28'
-							},
-						}).json
+						project = await loadPage(projectRelationId, this.settings.apiToken)
 
-						projectCache.set(projectRelationId, project)
-
+						projectCache.set(projectRelationId, project);
 					} else {
-						project = projectCache.get(projectRelationId)
+						project = projectCache.get(projectRelationId);
 					}
 
 					todos.push({
@@ -94,12 +75,14 @@ export default class NotionSyncPlugin extends Plugin {
 						name,
 						status,
 						url,
-						project: project.properties["Project name"].title[0].plain_text
-					})
+						project:
+							project.properties["Project name"].title[0]
+								.plain_text,
+					});
 				}
-				notice.hide()
+				notice.hide();
 				new AddTodoLinkModal(this.app, todos, editor).open();
-			}
+			},
 		});
 
 		// this.addCommand({
@@ -125,11 +108,14 @@ export default class NotionSyncPlugin extends Plugin {
 		// };
 	}
 
-	onunload() {
-	}
+	onunload() {}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		this.settings = Object.assign(
+			{},
+			DEFAULT_SETTINGS,
+			await this.loadData(),
+		);
 	}
 
 	async saveSettings() {
@@ -252,8 +238,8 @@ export default class NotionSyncPlugin extends Plugin {
 // }
 
 class AddTodoLinkModal extends FuzzySuggestModal<NotionTodo> {
-	todos: NotionTodo[]
-	editor: Editor
+	todos: NotionTodo[];
+	editor: Editor;
 
 	constructor(app: App, todos: NotionTodo[], editor: Editor) {
 		super(app);
@@ -278,20 +264,42 @@ ${issue.project} | ${issue.status}`;
 	onChooseItem(todo: NotionTodo, evt: MouseEvent | KeyboardEvent) {
 		new Notice(`Linked ${todo.name} (${todo.id})`);
 
-		const currentLine = this.editor.getLine(this.editor.getCursor().line)
+		const currentLine = this.editor.getLine(this.editor.getCursor().line);
 
-		if (currentLine.match('- \\[.\\] ')) {
+		if (currentLine.match("- \\[.\\] ")) {
 			if (todo.status === "Done" || todo.status === "Archived") {
-				this.editor.replaceRange(`- [x] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
-			} else if (todo.status === "In review" || todo.status === "Paused" || todo.status === "In progress") {
-				this.editor.replaceRange(`- [/] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
+				this.editor.replaceRange(
+					`- [x] `,
+					{ line: this.editor.getCursor().line, ch: 0 },
+					this.editor.getCursor(),
+				);
+			} else if (
+				todo.status === "In review" ||
+				todo.status === "Paused" ||
+				todo.status === "In progress"
+			) {
+				this.editor.replaceRange(
+					`- [/] `,
+					{ line: this.editor.getCursor().line, ch: 0 },
+					this.editor.getCursor(),
+				);
 			} else if (todo.status === "Planned" || todo.status === "Backlog") {
-				this.editor.replaceRange(`- [ ] `, {line: this.editor.getCursor().line, ch: 0}, this.editor.getCursor())
+				this.editor.replaceRange(
+					`- [ ] `,
+					{ line: this.editor.getCursor().line, ch: 0 },
+					this.editor.getCursor(),
+				);
 			}
 		}
 
-		this.editor.replaceRange(`[${todo.name} (*${todo.id}*)](${todo.url}) `, this.editor.getCursor())
-		this.editor.setCursor({line: this.editor.getCursor().line, ch: parseInt(this.editor.getLine(this.editor.getCursor().line)) + 1})
+		this.editor.replaceRange(
+			`[${todo.name} (*${todo.id}*)](${todo.url}) `,
+			this.editor.getCursor(),
+		);
+		this.editor.setCursor({
+			line: this.editor.getCursor().line,
+			ch: parseInt(this.editor.getLine(this.editor.getCursor().line)) + 1,
+		});
 	}
 }
 
