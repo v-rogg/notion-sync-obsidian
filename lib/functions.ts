@@ -116,7 +116,6 @@ export async function sync(app: App, settings: NotionSyncSettings) {
 						const todo = parseTodo(page);
 
 						if (moment(file.stat.mtime).isBefore(moment(page.last_edited_time))) {
-							console.log("Update locally", todo.status)
 							if (todo.status === "Done" || todo.status === "Archived") {
 								line = line.replace(/- \[.\] /, "- [x] ");
 								new Notice(`Marked To-Do ${todo.identifier} as Done`);
@@ -139,9 +138,15 @@ export async function sync(app: App, settings: NotionSyncSettings) {
 }
 
 function parseTodo(page: any): NotionTodo {
+	let name = "";
+
+	for (const title of page.properties["Task name"].title) {
+		name += title.plain_text
+	}
+
 	return {
 		identifier: `${page.properties["ID"].unique_id.prefix}-${page.properties["ID"].unique_id.number}`,
-		name: page.properties["Task name"].title[0].plain_text,
+		name: name,
 		status: page.properties["Status"].status.name,
 		url: page.url,
 	}

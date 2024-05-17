@@ -42,7 +42,6 @@ export async function loadPage(pageId: string, apiToken: string) {
 }
 
 export async function updatePage(pageId: string, apiToken: string, content: {}) {
-	console.log("Update Page")
 	const res = await requestUrl({
 		method: "PATCH",
 		url: `https://api.notion.com/v1/pages/${pageId}/`,
@@ -57,7 +56,6 @@ export async function updatePage(pageId: string, apiToken: string, content: {}) 
 }
 
 export async function searchForDatabases(apiToken: string) {
-	console.log(apiToken)
 	const res = await requestUrl({
 		method: "POST",
 		url: "https://api.notion.com/v1/search",
